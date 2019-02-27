@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang=de>
+<head>
+<meta charset=utf-8>
+<title>Wahllokale in Mecklenburg-Vorpommern - Bundestagswahl 2017</title>
+    <link href="styles.css" media="all" rel="stylesheet" type="text/css"/>
+    <script src="libs/jquery-1.10.2.min.js"></script>
+    
+    <link rel="stylesheet" href="libs/leaflet/leaflet.css"/>
+    <script src="libs/leaflet/leaflet.js"></script>
+    <script src="libs/markercluster/leaflet.markercluster.js"></script>
+    <link rel="stylesheet" href="libs/markercluster/MarkerCluster.css"/>
+    <link rel="stylesheet" href="libs/markercluster/MarkerCluster.Default.css"/>
+
+    <script src="libs/handlebars.min.js"></script>
+    <script src="mv.geojson.js"></script>
+    <script src="votes.json.js"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta/css/bootstrap.min.css" integrity="sha384-/Y6pD6FV/Vv2HJnA6t+vslU6fwYXjCFtcEpHbNJ0lyAFsXTsjBbfaDjzALeQsN6M" crossorigin="anonymous">
+</head>
+<body>
+    <div class="entry container-fluid">
+        <div class="row">
+            <div id="map" class="col-md-8"></div>
+            <div id="info" class="col-md-4">
+		<h1><br>Ergebnisse der Wahllokale in Mecklenburg-Vorpommern</h1>
+		<p class="lead">Zur Ansicht der Stimmverteilung in einem Wahllokal bewegen Sie die Maus über der Karte.</p>
+	    </div>
+        </div>
+        <div class="row">
+            <div id="hints">
+            Mit Daten der <a href="https://wahlen.mvnet.de/wahlergebnisse.php?wahl=b">
+            Landeswahlleiterin</a> und <a href="https://www.opendata-hro.de/dataset/bundestagswahl_2017/resource/3ed62c61-89b9-4742-b9f4-6b417c3c1e88?inner_span=True">OpenData.HRO</a>.
+            </div>
+        </div>
+    </div>
+
+    <script id="info-template" type="text/x-handlebars-template">
+        <div class="entry container-fluid">
+            <h1>{{wahllokal.wname}}</h1>
+            <strong>Wahlbeteiligung: {{wahllokal.Beteiligung}}%</strong>
+            <div class="parties row">
+                <div class="vote1 col-md-12">
+                    <h2>Erststimmen</h2>
+                    <div class="row">
+                {{#each wahllokal.parties.one}}
+                    {{#if this.value}}
+                        <div class="col-md-8">
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: {{this.progress}}%;background-color: {{this.color}};" aria-valuenow="{{this.value}}" aria-valuemin="0" aria-valuemax="100"></div>
+                                {{this.value}}%
+                            </div>
+                        </div>
+                        <div class="col-md-4">{{this.label}}</div>
+                    {{/if}}
+                {{/each}}
+                    </div>
+                </div>
+                <div class="vote2 col-md-12">
+                    <h2>Zweitstimmen</h2>
+                    <div class="row">
+                {{#each wahllokal.parties.two}}
+                    {{#if this.value}}
+                        <div class="col-md-8">
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: {{this.progress}}%;background-color: {{this.color}};" aria-valuenow="{{this.value}}" aria-valuemin="0" aria-valuemax="100"></div>
+                                {{this.value}}%
+                            </div>
+                        </div>
+                        <div class="col-md-4">{{this.label}}</div>
+                    {{/if}}
+                {{/each}}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </script>
+
+<script>
+if (!Object.entries)
+  Object.entries = function( obj ){
+    var ownProps = Object.keys( obj ),
+        i = ownProps.length,
+        resArray = new Array(i); // preallocate the Array
+    while (i--)
+      resArray[i] = [ownProps[i], obj[ownProps[i]]];
+    
+    return resArray;
+  };
+
+
+var colors = {
+    'cdu': "#000000",
+    'spd':"#e3000f",
+    'dielinke': "#C33574",
+    'gruene': "#75B916",
+    'fdp': "#FECB00",
+    'afd': "#009ee0",
+    'npd': "#3a3935",
+    'diepartei': "#3a3935",
+    'tierschutzpartei': "#3a3935",
+    'bge': "#3a3935",
+    'freiewaehler': "#3a3935",
+    'mlpd': "#3a3935",
+    'oedp': "#3a3935"
+};
+var labels = {
+    'cdu': "CDU",
+    'spd':"SPD",
+    'dielinke': "Die Linke",
+    'gruene': "Bündnis 90/DieGrünen",
+    'fdp': "FDP",
+    'afd': "AfD",
+    'npd': "NPD",
+    'diepartei': "Die PARTEI",
+    'tierschutzpartei': "Tierschutzpartei",
+    'bge': "BGE",
+    'freiewaehler': "Freie Wähler",
+    'mlpd': "MLPD",
+    'oedp': "ÖDP"
+};
+
+var mvmap = L.map('map').setView([53.847,12.425], 8);
+L.tileLayer('https://www.orka-mv.de/geodienste/orkamv/tiles/1.0.0/orkamv/GLOBAL_WEBMERCATOR/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: 'Kartenbild © Hansestadt Rostock (CC BY 4.0) | Kartendaten © OpenStreetMap (ODbL) und LkKfS-MV',
+    id: 'orka'
+}).addTo(mvmap);
+    
+var markers = L.markerClusterGroup({
+    maxClusterRadius: 5
+});
+
+function onMouseover(e) {
+    id = e.target.options.voteid;
+    wahllokal = votes[id];
+    if (typeof wahllokal.parties.one.cdu.name === "undefined") {
+        parties = Object.entries(wahllokal.parties.one);
+        parties.forEach(function(element, key) {
+            wahllokal.parties.one[element[0]] = {
+                'name' : element[0],
+                'value': element[1],
+                'label': labels[element[0]],
+                'color': colors[element[0]],
+                'progress': element[1] * 1.8
+            }
+        });
+        parties = Object.entries(wahllokal.parties.two);
+        parties.forEach(function(element, key) {
+            wahllokal.parties.two[element[0]] = {
+                'name' : element[0],
+                'value': element[1],
+                'label': labels[element[0]],
+                'color': colors[element[0]],
+                'progress': element[1] * 1.8
+            }
+        });
+    }
+    context = {
+        'labels': labels,
+        'colors': colors,
+        'wahllokal': wahllokal
+    }
+    var source   = $("#info-template").html();
+    var template = Handlebars.compile(source);
+    var html = template(context);
+    $('#info').html(html);
+}
+    
+L.geoJSON(geolokale, {
+    pointToLayer: function (feature, latlng) {
+        party = votes[feature.properties.id].winner;
+        marker = L.circleMarker(latlng, {
+            voteid: feature.properties.id,
+            radius: 7,
+            color: colors[party],
+            fillColor: colors[party],
+            fillOpacity: parseFloat(votes[feature.properties.id].Beteiligung) / 100
+        });
+        //marker = L.marker(latlng, {icon: icons[party]});
+        marker.on('mouseover', onMouseover);
+	marker.on('click', onMouseover);
+        marker.bindTooltip(feature.properties.name).openTooltip();
+        markers.addLayer(marker);
+        return null;
+    }
+});
+mvmap.addLayer(markers);
+
+</script>
+</body>
+</html>
